@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Grid MCP"
+description = "Grid MCP is an independent GB electricity market analysis desk and read-only MCP server, using data from the Elexon Insights public API."
+version = "1.0.0"
+id = "artifacts/elexon-mcp"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25239
+
+[services.development]
+run = "pnpm --filter @workspace/elexon-mcp run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/elexon-mcp", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/elexon-mcp/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25239"
+BASE_PATH = "/"

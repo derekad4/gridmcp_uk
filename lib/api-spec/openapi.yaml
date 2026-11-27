@@ -1,0 +1,496 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+paths:
+  /monitoring:
+    get:
+      operationId: getApiMonitoring
+      summary: Manually requested API checks and up to 400 days of check history
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, enum: [1, 7, 30, 90, 365, 400], default: 7 }
+      responses:
+        "200":
+          description: Recorded checks only; missing checks are unknown, not uptime
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiMonitoring" }
+        "400": { description: Unsupported date range }
+        "503": { description: Monitoring storage unavailable }
+  /monitoring/check:
+    post:
+      operationId: runApiManualCheck
+      summary: Run fixed API probes on demand and save their results
+      description: Same-origin browser requests only. Globally limited to one run per 30 seconds. Does not invoke AI or send email.
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, enum: [1, 7, 30, 90, 365, 400], default: 30 }
+      responses:
+        "200":
+          description: Completed check or recent results when another check just ran
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiManualCheckResult" }
+        "400": { description: Unsupported range }
+        "403": { description: Same-origin JSON request required }
+        "429": { description: Too many manual requests }
+        "503": { description: Checks or storage unavailable }
+  /ask/history:
+    get:
+      operationId: getAskHistory
+      summary: Read lightweight titles and dates for this browser's completed analyses
+      responses:
+        "200":
+          description: Private browser history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskHistory"
+  /ask/questions:
+    post:
+      operationId: askQuestion
+      summary: Stream progress and a completed analysis as server sent events
+      description: "Use fetch with credentials. Events contain type (progress, complete, error), message, and optional answer. Disconnect cancels execution. No automatic retries."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskInput"
+      responses:
+        "200":
+          description: Progress stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400": { description: Invalid question }
+        "403": { description: Same origin required }
+        "429": { description: Usage or concurrency budget reached }
+        "503": { description: AI service not configured }
+  /ask/answers/{id}:
+    delete:
+      operationId: deleteAskAnswer
+      summary: Permanently delete one completed analysis owned by this browser
+      description: Requires the existing browser session and a same-origin JSON request. Other saved analyses are unaffected.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Saved analysis deleted }
+        "400": { description: Invalid analysis identifier }
+        "403": { description: Same-origin JSON request required }
+        "404": { description: Analysis unavailable or not owned by this browser }
+        "429": { description: Too many deletion requests }
+        "503": { description: Saved-analysis storage unavailable }
+    get:
+      operationId: getAskAnswer
+      summary: Read one full analysis owned by this browser session
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Complete saved analysis, compressed for browsers that accept gzip
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalysisAnswer" }
+        "400": { description: Invalid analysis identifier }
+        "404": { description: Analysis unavailable or expired }
+        "429": { description: Read rate limit }
+  /ask/answers/{id}/export/{format}:
+    get:
+      operationId: exportAskAnswer
+      summary: Download a report owned by this browser session
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: format, in: path, required: true, schema: { type: string, enum: [xlsx, docx, pdf] } }
+      responses:
+        "200":
+          description: Actual Excel, Word or PDF bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404": { description: Analysis unavailable or expired }
+        "429": { description: Export rate limit }
+  /server:
+    get:
+      operationId: getServerInfo
+      summary: Read MCP server configuration and availability
+      responses:
+        "200":
+          description: Server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfo"
+  /tools:
+    get:
+      operationId: listTools
+      summary: List supported read-only Elexon tools
+      responses:
+        "200":
+          description: Tool catalog
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolInfo"
+  /tools/execute:
+    post:
+      operationId: executeTool
+      summary: Run an Elexon tool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolInput"
+      responses:
+        "200":
+          description: Tool result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolResult"
+        "400":
+          description: Invalid tool input
+        "429":
+          description: Too many requests
+        "502":
+          description: Elexon data unavailable
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+components:
+  schemas:
+    ApiManualCheckResult:
+      type: object
+      required: [skipped, monitoring]
+      properties:
+        skipped: { type: boolean }
+        monitoring: { $ref: "#/components/schemas/ApiMonitoring" }
+    ApiMonitoring:
+      type: object
+      required: [generatedAt, from, to, days, intervalSeconds, retentionDays, bucketSeconds, firstCheckAt, lastRunnerAt, runnerState, targets, series, incidents, recentChecks, incidentsTruncated, setup, notifications]
+      properties:
+        mode: { type: string, enum: [manual, independent] }
+        notifications:
+          $ref: "#/components/schemas/ApiMonitorNotifications"
+        generatedAt: { type: string }
+        from: { type: string }
+        to: { type: string }
+        days: { type: integer }
+        intervalSeconds: { type: integer }
+        retentionDays: { type: integer }
+        bucketSeconds: { type: integer }
+        firstCheckAt: { type: [string, "null"] }
+        lastRunnerAt: { type: [string, "null"] }
+        runnerState: { type: string, enum: [waiting, fresh, stale] }
+        incidentsTruncated: { type: boolean }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/ApiMonitorTarget" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/ApiMonitorBucket" }
+        incidents:
+          type: array
+          items: { $ref: "#/components/schemas/ApiMonitorIncident" }
+        recentChecks:
+          type: array
+          items: { $ref: "#/components/schemas/ApiMonitorCheck" }
+        setup:
+          type: object
+          required: [schedule, command, targetUrl, instructions]
+          properties:
+            schedule: { type: string }
+            command: { type: string }
+            targetUrl: { type: [string, "null"] }
+            instructions: { type: string }
+    ApiMonitorNotifications:
+      type: object
+      required: [mode, watchdogLastAt, pending, failed]
+      properties:
+        mode: { type: string, enum: [disabled, dry-run, live, misconfigured] }
+        watchdogLastAt: { type: [string, "null"] }
+        pending: { type: integer }
+        failed: { type: integer }
+    ApiMonitorTarget:
+      type: object
+      required: [id, name, url, status, lastCheckedAt, lastResponseMs, uptimePercent, coveragePercent, checks, successfulChecks, failedChecks, degradedChecks, expectedChecks, unknownChecks, meanResponseMs, p95ResponseMs]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: [string, "null"] }
+        status: { type: string, enum: [up, degraded, down, unknown] }
+        lastCheckedAt: { type: [string, "null"] }
+        lastResponseMs: { type: [number, "null"] }
+        uptimePercent: { type: [number, "null"] }
+        coveragePercent: { type: number }
+        checks: { type: integer }
+        successfulChecks: { type: integer }
+        failedChecks: { type: integer }
+        degradedChecks: { type: integer }
+        expectedChecks: { type: integer }
+        unknownChecks: { type: integer }
+        meanResponseMs: { type: [number, "null"] }
+        p95ResponseMs: { type: [number, "null"] }
+    ApiMonitorBucket:
+      type: object
+      required: [target, at, uptimePercent, coveragePercent, meanResponseMs, p95ResponseMs, checks, failedChecks, expectedChecks]
+      properties:
+        target: { type: string }
+        at: { type: string }
+        uptimePercent: { type: [number, "null"] }
+        coveragePercent: { type: number }
+        meanResponseMs: { type: [number, "null"] }
+        p95ResponseMs: { type: [number, "null"] }
+        checks: { type: integer }
+        failedChecks: { type: integer }
+        expectedChecks: { type: integer }
+    ApiMonitorCheck:
+      type: object
+      required: [id, target, checkedAt, status, responseMs, httpStatus, reason]
+      properties:
+        id: { type: string }
+        target: { type: string }
+        checkedAt: { type: string }
+        status: { type: string, enum: [up, degraded, down] }
+        responseMs: { type: [number, "null"] }
+        httpStatus: { type: [integer, "null"] }
+        reason: { type: string }
+    ApiMonitorIncident:
+      type: object
+      required: [target, startedAt, lastFailedAt, recoveredAt, failedChecks, observedDurationSeconds]
+      properties:
+        target: { type: string }
+        startedAt: { type: string }
+        lastFailedAt: { type: string }
+        recoveredAt: { type: [string, "null"] }
+        failedChecks: { type: integer }
+        observedDurationSeconds: { type: number }
+    AskInput:
+      type: object
+      additionalProperties: false
+      required: [question]
+      properties:
+        question: { type: string, minLength: 3, maxLength: 32000 }
+        parentId: { type: string, format: uuid }
+    AskHistory:
+      type: object
+      required: [answers, notice, limits, available]
+      properties:
+        answers:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisSummary" }
+        notice: { type: string }
+        limits: { type: string }
+        available: { type: boolean }
+    AnalysisSummary:
+      type: object
+      required: [id, title, createdAt, timezone]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        createdAt: { type: string }
+        timezone: { type: string }
+    AnalysisAnswer:
+      type: object
+      required: [id, question, title, narrative, createdAt, timezone, datasets, charts, diagram, metrics, limitations, tokens]
+      properties:
+        id: { type: string }
+        question: { type: string }
+        title: { type: string }
+        narrative: { type: string }
+        createdAt: { type: string }
+        timezone: { type: string }
+        tokens: { type: integer }
+        limitations: { type: array, items: { type: string } }
+        datasets:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisDataset" }
+        charts:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisChart" }
+        metrics:
+          type: array
+          items: { $ref: "#/components/schemas/AnalysisMetric" }
+        diagram:
+          $ref: "#/components/schemas/AnalysisDiagram"
+    AnalysisDataset:
+      type: object
+      required: [id, tool, sourceUrl, fetchedAt, arguments, note, coverage, count, totalCount, truncated, columns, rows]
+      properties:
+        id: { type: string }
+        tool: { type: string }
+        sourceUrl: { type: string }
+        fetchedAt: { type: string }
+        arguments: { type: object, additionalProperties: {} }
+        metadata: { type: object, additionalProperties: {} }
+        nextOffset: { type: [integer, "null"] }
+        note: { type: string }
+        coverage: { type: string }
+        count: { type: integer }
+        totalCount: { type: integer }
+        truncated: { type: boolean }
+        columns:
+          type: array
+          items:
+            type: object
+            required: [key, unit]
+            properties:
+              key: { type: string }
+              unit: { type: string }
+        rows:
+          type: array
+          items: { type: object, additionalProperties: {} }
+    AnalysisChart:
+      type: object
+      required: [title, kind, datasetId, xKey, yKeys, unit]
+      properties:
+        title: { type: string }
+        kind: { type: string, enum: [line, area, bar, composition, pie, donut, horizontalBar, stackedBar, stackedArea, scatter] }
+        datasetId: { type: string }
+        xKey: { type: string }
+        yKeys: { type: array, items: { type: string } }
+        unit: { type: string }
+    AnalysisMetric:
+      type: object
+      required: [label, value, unit, datasetId, calculation]
+      properties:
+        label: { type: string }
+        value: { type: number }
+        unit: { type: string }
+        datasetId: { type: string }
+        calculation: { type: string }
+    AnalysisDiagram:
+      type: object
+      required: [title, description, nodes, edges]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id: { type: string }
+              label: { type: string }
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to, label]
+            properties:
+              from: { type: string }
+              to: { type: string }
+              label: { type: string }
+    ServerInfo:
+      type: object
+      required: [name, version, status, transport, endpointPath, authentication, toolCount, cacheTtlSeconds]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        status: { type: string }
+        transport: { type: string }
+        endpointPath: { type: string }
+        authentication: { type: string }
+        toolCount: { type: integer }
+        cacheTtlSeconds: { type: integer }
+        endpointCount: { type: integer }
+        catalogVersion: { type: string }
+        specificationUrl: { type: string }
+        specificationHash: { type: string }
+    ToolInfo:
+      type: object
+      required: [name, title, description, category, parameters, example]
+      properties:
+        name: { type: string }
+        title: { type: string }
+        description: { type: string }
+        category: { type: string }
+        path: { type: string }
+        method: { type: string }
+        kind: { type: string, enum: [convenience, endpoint] }
+        deprecated: { type: boolean }
+        inputSchema:
+          type: object
+          additionalProperties: true
+        parameters:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolParameter"
+        example:
+          type: object
+          additionalProperties: true
+    ToolParameter:
+      type: object
+      required: [name, type, required, description]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        required: { type: boolean }
+        description: { type: string }
+        location: { type: string }
+        schema:
+          type: object
+          additionalProperties: true
+    ToolInput:
+      type: object
+      required: [name, arguments]
+      properties:
+        name: { type: string }
+        arguments:
+          type: object
+          additionalProperties: true
+    ToolResult:
+      type: object
+      required: [tool, source, sourceUrl, fetchedAt, cached, count, totalCount, truncated, data, note]
+      properties:
+        tool: { type: string }
+        source: { type: string }
+        sourceUrl: { type: string }
+        fetchedAt: { type: string }
+        cached: { type: boolean }
+        count: { type: integer }
+        totalCount: { type: integer }
+        truncated: { type: boolean }
+        note: { type: string }
+        nextOffset: { type: ["integer", "null"] }
+        metadata:
+          type: object
+          additionalProperties: true
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+

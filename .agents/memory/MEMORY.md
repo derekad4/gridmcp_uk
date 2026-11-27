@@ -1,0 +1,9 @@
+- [Elexon specification caveats](elexon-specification.md) — validate examples against schemas; upstream date-time examples can be invalid ISO strings.
+- [Recharts compatibility checks](recharts-compatibility.md) — a visible plot does not prove axes, legends or hover details rendered in Recharts 2.
+- [Managed AI activation](managed-ai-activation.md) — missing task-chat provisioning is not evidence that the app requires a personal API key.
+- [Embedded session verification](embedded-sessions.md) — a successful standalone browser test does not cover preview browsers that withhold cookies.
+- [Analysis evidence completeness](analysis-evidence.md) — models can stop at a page or confuse publication and observation time despite prompt instructions.
+- [Large analysis transport](analysis-transport.md) — history must stay lightweight; successful database reads do not prove large JSON reaches the browser.
+- [Numeric query enums](query-enum-validation.md) — generated literal unions need explicit HTTP string normalization before validation.
+- [Health check operating mode](monitoring-hosting.md) — owner chose manual button-triggered checks instead of independent scheduling; do not resume scheduler setup.
+- [Grid MCP branding](public-domain.md) — gridmcp.uk; brand as Grid MCP, mentioning Elexon only for API and data-source attribution.
