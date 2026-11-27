@@ -1,4 +1,4 @@
-# Elexon Insights MCP
+# UK Grid MCP
 
 Independent, public, read-only Model Context Protocol server for Great Britain's electricity market data. No Elexon API key is required.
 
